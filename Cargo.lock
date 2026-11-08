@@ -35,6 +35,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chimera-learn"
+version = "0.1.0"
+dependencies = [
+ "chimera",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "chimera-wasm"
 version = "0.1.0"
 dependencies = [
