@@ -16,6 +16,13 @@ and the CLI) under a React UI. See the README.
 
 ## Map
 
+- This fork's learning experiments live in `research/neural/`; `crates/chimera-learn/`
+  is an offline JSON-lines bridge to the unchanged engine. Read `docs/neural-learning.md`.
+  Learning setup checks: build the bridge, run the Python tests and `chimera-neural smoke`
+  (instructions in `research/neural/README.md`). Keep recordings, checkpoints, replay buffers
+  and runs out of git. A smoke run verifies plumbing, never learning quality. Longer training
+  needs an explicit step budget; paid compute needs a separate proposal.
+
 - `crates/chimera/`: the engine (no I/O). `crates/chimera-wasm/`: the browser's C ABI.
   `crates/chimera-cli/`: `chimera render | compare csd | diagnose | calibrate`.
 - `src/wasm/`: the UI's facade over the engine. `src/worklet/`: the AudioWorklet. `src/ui/`: React

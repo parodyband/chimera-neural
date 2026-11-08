@@ -1,4 +1,17 @@
-# CHIMERA
+# CHIMERA Neural
+
+Experimental fork of [CHIMERA](https://github.com/jamesondh/chimera-vocal-synth):
+a neural policy learns to operate the physical vocal tract through acoustic feedback.
+The Rust engine still generates every sample.
+
+Start with the [learning setup](research/neural/README.md) and
+[research and architecture decision](docs/neural-learning.md).
+The initial baseline is goal-conditioned Soft Actor-Critic with a small MLP, learning
+eight vowel articulators. It includes a native engine bridge, Gymnasium environment,
+training, and held-out evaluation. This is a tested experiment scaffold, **not a trained
+speech model**. Longer speech and world-model planning are follow-up experiments.
+
+## Original synthesizer
 
 A physical-modeling voice synthesizer in the browser. Every sound comes from a simulated
 airway (lungs, vocal folds or syrinx, a branched vocal tract, lips, nose), not from samples.

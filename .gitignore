@@ -8,3 +8,11 @@ src/wasm/chimera.wasm
 
 # duet shows (?show=<id>) are made locally and are never published: often covers of songs we have no rights to
 public/shows/
+
+# Local learning environments, recordings, replay buffers and checkpoints
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+research/neural/data/
+research/neural/runs/

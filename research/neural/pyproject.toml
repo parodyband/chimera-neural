@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chimera-neural"
+version = "0.1.0"
+description = "Goal-conditioned neural control of CHIMERA's physical vocal tract"
+requires-python = ">=3.11"
+dependencies = ["numpy>=2,<3", "gymnasium>=1,<2", "stable-baselines3>=2.7,<3", "soundfile>=0.13,<1"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+chimera-neural = "chimera_neural.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["chimera_neural*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
