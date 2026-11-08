@@ -39,6 +39,7 @@ name = "chimera-learn"
 version = "0.1.0"
 dependencies = [
  "chimera",
+ "flate2",
  "serde",
  "serde_json",
 ]

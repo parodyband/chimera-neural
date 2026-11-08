@@ -6,6 +6,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io::{self, BufRead, Write};
 
+mod dataset;
+
 const FS: usize = 48000;
 const FRAMES: usize = 2400; // 50 ms actions; engine dynamics still run at control rate.
 const KEYS: [ArticKey; 8] = [
@@ -96,6 +98,15 @@ fn render(v: &mut HumanVoice) -> Result<Value, String> {
 }
 
 fn main() -> io::Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let run = match args.first().map(String::as_str) {
+        Some("dataset") => Some(dataset::dataset(&args[1..])),
+        Some("replay") => Some(dataset::replay(&args[1..])),
+        _ => None,
+    };
+    if let Some(result) = run {
+        return result.map_err(io::Error::other);
+    }
     let mut voice = None;
     let mut stdout = io::BufWriter::new(io::stdout().lock());
     for line in io::stdin().lock().lines() {

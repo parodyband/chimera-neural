@@ -7,7 +7,7 @@ name = "chimera-neural"
 version = "0.1.0"
 description = "Goal-conditioned neural control of CHIMERA's physical vocal tract"
 requires-python = ">=3.11"
-dependencies = ["numpy>=2,<3", "gymnasium>=1,<2", "stable-baselines3>=2.7,<3", "soundfile>=0.13,<1"]
+dependencies = ["numpy>=2,<3", "gymnasium>=1,<2", "stable-baselines3>=2.7,<3", "soundfile>=0.13,<1", "transformers>=4.46,<5"]
 
 [project.optional-dependencies]
 test = ["pytest>=8,<10"]

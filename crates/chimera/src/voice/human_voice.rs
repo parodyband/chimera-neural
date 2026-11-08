@@ -187,6 +187,8 @@ pub struct HumanVoice {
     pub score: GestureScore,
     pub clock: f64,
     blend: [Blended; N_CONTROL],
+    /// offline replay: when set, used in place of the score's blend (see `set_blend_override`)
+    blend_override: Option<[Blended; N_CONTROL]>,
     base_abduction: f64,
     base_closure: f64,
     score_f0: Option<f64>,
@@ -242,6 +244,7 @@ impl HumanVoice {
             score: GestureScore::new(),
             clock: 0.0,
             blend: [Blended::default(); N_CONTROL],
+            blend_override: None,
             base_abduction: 0.0,
             base_closure: 0.0,
             score_f0: None,
@@ -298,6 +301,18 @@ impl HumanVoice {
     /// Cancel scheduled gestures (speech stops; the voice returns to the performer's posture).
     pub fn cancel_score(&mut self) {
         self.score.clear();
+    }
+
+    /// The score's blended controls at the last control tick, and whether a score (or an override)
+    /// was driving them. Offline learning records these as the labels of what the voice was told.
+    pub fn blend(&self) -> (&[Blended; N_CONTROL], bool) {
+        (&self.blend, self.score.size() > 0 || self.blend_override.is_some())
+    }
+
+    /// Offline replay of recorded controls: `Some` drives every control tick with these blended
+    /// values instead of the score's (the score is kept but not read); `None` returns to the score.
+    pub fn set_blend_override(&mut self, b: Option<[Blended; N_CONTROL]>) {
+        self.blend_override = b;
     }
 
     /// breath/voice on (1) or off (0); intermediate values scale the pressure
@@ -429,8 +444,13 @@ impl HumanVoice {
         let mut breath_act = 0.0;
         let mut breath_val = 0.0;
         let mut f0_target = self.source.f0;
-        if self.score.size() > 0 {
-            self.score.blend_all(t, &mut self.blend);
+        if let Some(b) = self.blend_override {
+            self.blend = b;
+        }
+        if self.score.size() > 0 || self.blend_override.is_some() {
+            if self.blend_override.is_none() {
+                self.score.blend_all(t, &mut self.blend);
+            }
             let b = &self.blend;
             // performer's base posture keeps a small say on keys the score controls
             self.artic.step(dt, Some(&b[..]), 0.05);

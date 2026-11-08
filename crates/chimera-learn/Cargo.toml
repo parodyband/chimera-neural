@@ -9,3 +9,4 @@ description = "Offline JSON-lines environment bridge for articulatory learning"
 chimera = { path = "../chimera" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+flate2 = "1"
