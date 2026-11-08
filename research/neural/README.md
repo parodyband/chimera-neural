@@ -79,6 +79,35 @@ is the mean spectrum of each clip, so a phrase or glide is NOT an appropriate in
 Keep train/validation/test recordings distinct. Never put recordings or derived models in
 git; follow the existing CSD restrictions if using that dataset.
 
+## Hillenbrand 1995 men's vowels
+
+The first real-speech target set. The [mirror](https://github.com/santiagobarreda/hillenbrand_et_al_1995)
+is hosted with Jim Hillenbrand's permission; the recordings stay in ignored `data/`.
+
+```sh
+mkdir -p research/neural/data/raw/x
+curl -L -o research/neural/data/raw/h95-alldata.zip \
+  https://raw.githubusercontent.com/santiagobarreda/hillenbrand_et_al_1995/main/h95-alldata.zip
+unzip -q research/neural/data/raw/h95-alldata.zip -d research/neural/data/raw/x
+research/neural/.venv/bin/chimera-neural prepare-hillenbrand \
+  --raw research/neural/data/raw/x --out research/neural/data/h95-men
+```
+
+This gives 321 train, 54 validation and 108 test tokens from 30, 5 and 10 talkers (talkers never
+straddle splits). The 45 /er/ tokens (no tip-curl control) and 12 tokens that listeners
+misidentified are dropped. Each token is a 150 ms steady-state window, resampled
+16→48 kHz and level-matched to the synth. Its measured f0 goes in `f0.json`, which the env
+reads per file. Before any training, matching each real token to the nearest of the synth's
+own 11 vowel-table postures (rendered at the token's f0) picks the right vowel 40% of the
+time (chance: 9%). So the reward carries vowel identity, but real-vs-synth spectral mismatch
+is large. Treat that 40% as a reference, not a ceiling: the policy can find postures off the table.
+
+Training options for this set: `--mix-synthetic 0.3` (a share of episodes get reachable
+synthetic goals), `--validation <dir>` (scored every `--validate-every` steps into
+`validation.csv`, best kept as `best-policy.zip`), `--checkpoint-every`, `--net 256,256`,
+`--buffer`. `evaluate --policy best-policy` scores a checkpoint. With recordings, evaluation
+runs every file once.
+
 ## Environment contract
 
 - Native process stays alive across steps. `reset` creates a fresh deterministic voice,

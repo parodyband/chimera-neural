@@ -10,6 +10,7 @@ import numpy as np
 import soundfile as sf
 import torch
 from stable_baselines3 import SAC
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.logger import configure
 
@@ -26,9 +27,12 @@ def positive(value):
 def evaluate(model, env, episodes, seed, output):
     """Same goals for all policies; report tail distance, never training return alone."""
     rows = []
+    if env.recordings:  # every held-out recording once, not a random sample
+        episodes = len(env.recordings)
     for policy in ("neutral", "random", "learned"):
         for episode in range(episodes):
-            obs, _ = env.reset(seed=seed + episode)
+            obs, _ = env.reset(seed=seed + episode,
+                               options={"index": episode} if env.recordings else None)
             rng = np.random.default_rng(seed + episode)
             distances, audio, trajectory = [], [], []
             if episode == 0 and policy == "neutral":
@@ -61,28 +65,81 @@ def evaluate(model, env, episodes, seed, output):
     print(json.dumps(report["mean_tail_distance"], indent=2))
 
 
+def tail_distances(model, env, episodes, seed):
+    """Deterministic learned-policy tail distance; every recording if the env has them."""
+    count = len(env.recordings) if env.recordings else episodes
+    result = []
+    for episode in range(count):
+        obs, _ = env.reset(seed=seed + episode, options={"index": episode} if env.recordings else None)
+        done, distances = False, []
+        while not done:
+            action, _ = model.predict(obs, deterministic=True)
+            obs, _, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            distances.append(info["distance"])
+        result.append(float(np.mean(distances[-5:])))
+    return result
+
+
+class Validation(BaseCallback):
+    """Periodic held-out score (validation recordings or fixed synthetic seeds) and best policy."""
+    def __init__(self, env, every, output, episodes=20, seed=2000000):
+        super().__init__()
+        self.env, self.every, self.output = env, every, output
+        self.episodes, self.seed, self.best = episodes, seed, float("inf")
+        self.log = output / "validation.csv"
+        self.log.write_text("timesteps,mean_tail_distance,elapsed_seconds\n")
+        self.start = time.monotonic()
+
+    def _on_step(self):
+        if self.n_calls % self.every == 0:
+            score = float(np.mean(tail_distances(self.model, self.env, self.episodes, self.seed)))
+            with self.log.open("a") as f:
+                f.write(f"{self.num_timesteps},{score:.6f},{time.monotonic() - self.start:.1f}\n")
+            if score < self.best:
+                self.best = score
+                self.model.save(self.output / "best-policy")
+        return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     smoke = sub.add_parser("smoke", help="Check real renderer, Gym contract, and a few SAC updates")
     smoke.add_argument("--out", type=Path, default=ROOT / "research/neural/runs/smoke")
+    prep = sub.add_parser("prepare-hillenbrand", help="Trim, resample and split Hillenbrand 1995 vowels")
+    prep.add_argument("--raw", type=Path, required=True, help="Unzipped h95-alldata.zip directory")
+    prep.add_argument("--out", type=Path, required=True)
     train = sub.add_parser("train")
     train.add_argument("--steps", type=positive, required=True, help="Explicit environment-step budget")
     train.add_argument("--seed", type=int, default=0)
     train.add_argument("--targets", type=Path, help="Directory of steady-vowel recordings; default synthetic goals")
     train.add_argument("--f0", type=float, default=140)
     train.add_argument("--out", type=Path, required=True)
+    train.add_argument("--mix-synthetic", type=float, default=0.0,
+                       help="Probability an episode uses a reachable synthetic goal instead of a recording")
+    train.add_argument("--validation", type=Path, help="Held-out recordings scored during training")
+    train.add_argument("--validate-every", type=positive, default=25000)
+    train.add_argument("--buffer", type=positive, default=1000000, help="Replay buffer transitions")
+    train.add_argument("--checkpoint-every", type=positive, default=100000)
+    train.add_argument("--net", type=lambda v: [positive(x) for x in v.split(",")], default=[256, 256],
+                       help="Hidden layer widths for actor and critics, e.g. 256,256")
     evaluate_parser = sub.add_parser("evaluate")
     evaluate_parser.add_argument("--run", type=Path, required=True)
     evaluate_parser.add_argument("--out", type=Path, required=True)
     evaluate_parser.add_argument("--targets", type=Path, help="Separate held-out recordings; default synthetic")
     evaluate_parser.add_argument("--episodes", type=positive, default=20)
     evaluate_parser.add_argument("--seed", type=int, default=1000000)
+    evaluate_parser.add_argument("--policy", default="policy", help="Checkpoint name in the run, e.g. best-policy")
     args = parser.parse_args()
     torch.set_num_threads(1)
+    if args.command == "prepare-hillenbrand":
+        from .hillenbrand import prepare
+        print(json.dumps(prepare(args.raw, args.out), indent=2))
+        return
     if args.command == "evaluate":
         config = json.loads((args.run / "config.json").read_text())
-        model = SAC.load(args.run / "policy", device="cpu")
+        model = SAC.load(args.run / args.policy, device="cpu")
         args.out.mkdir(parents=True, exist_ok=False)
         (args.out / "config.json").write_text(json.dumps({
             "training": config, "seed": args.seed, "episodes": args.episodes,
@@ -90,7 +147,8 @@ def main():
             "target_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                                for p in sorted(args.targets.glob("*.wav"))} if args.targets else {},
             "renderer_sha256": hashlib.sha256((ROOT / "target/release/chimera-learn").read_bytes()).hexdigest(),
-            "policy_sha256": hashlib.sha256((args.run / "policy.zip").read_bytes()).hexdigest()
+            "policy": args.policy,
+            "policy_sha256": hashlib.sha256((args.run / f"{args.policy}.zip").read_bytes()).hexdigest()
         }, indent=2) + "\n")
         env = VowelEnv(targets=args.targets, f0=config["f0"])
         try:
@@ -104,9 +162,13 @@ def main():
     seed = 0 if is_smoke else args.seed
     f0 = 140 if is_smoke else args.f0
     targets = None if is_smoke else args.targets
+    net = [128, 128] if is_smoke else args.net
+    mix = 0.0 if is_smoke else args.mix_synthetic
     # Prevent accidental checkpoint replacement.
     args.out.mkdir(parents=True, exist_ok=False)
-    config = {"algorithm": "SAC", "network": [128, 128], "steps": steps, "seed": seed,
+    config = {"algorithm": "SAC", "network": net, "steps": steps, "seed": seed, "mix_synthetic": mix,
+              "buffer": 100000 if is_smoke else args.buffer,
+              "validation": None if is_smoke or not args.validation else str(args.validation.resolve()),
               "f0": f0, "targets": str(targets.resolve()) if targets else None,
               "engine_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
               "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True)),
@@ -115,16 +177,22 @@ def main():
     config["target_sha256"] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
                                for p in sorted(targets.glob("*.wav"))} if targets else {}
     (args.out / "config.json").write_text(json.dumps(config, indent=2) + "\n")
-    env = VowelEnv(targets=targets, f0=f0)
+    env = VowelEnv(targets=targets, f0=f0, mix_synthetic=mix)
+    val_env = None
     start = time.monotonic()
     try:
         if is_smoke:
             check_env(env, warn=True)
-        model = SAC("MlpPolicy", env, policy_kwargs={"net_arch": [128, 128]},
+        model = SAC("MlpPolicy", env, policy_kwargs={"net_arch": net},
                     learning_starts=16 if is_smoke else 1000, batch_size=32 if is_smoke else 256,
-                    buffer_size=100000, seed=seed, device="cpu", verbose=1)
+                    buffer_size=100000 if is_smoke else args.buffer, seed=seed, device="cpu", verbose=1)
         model.set_logger(configure(str(args.out), ["stdout", "csv"]))
-        model.learn(total_timesteps=steps)
+        callbacks = []
+        if not is_smoke:
+            val_env = VowelEnv(targets=args.validation, f0=f0)
+            callbacks = [Validation(val_env, args.validate_every, args.out),
+                         CheckpointCallback(args.checkpoint_every, str(args.out / "checkpoints"), name_prefix="policy")]
+        model.learn(total_timesteps=steps, callback=callbacks)
         model.save(args.out / "policy")
         model.save_replay_buffer(args.out / "replay.pkl")
         config["elapsed_seconds"] = time.monotonic() - start
@@ -133,6 +201,8 @@ def main():
         print(json.dumps(config, indent=2))
     finally:
         env.close()
+        if val_env:
+            val_env.close()
 
 
 if __name__ == "__main__":

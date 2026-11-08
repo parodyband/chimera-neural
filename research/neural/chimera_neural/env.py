@@ -96,31 +96,40 @@ class VowelEnv(gym.Env):
     """
     metadata = {"render_modes": []}
 
-    def __init__(self, targets=None, f0=140.0, binary=None):
+    def __init__(self, targets=None, f0=140.0, binary=None, mix_synthetic=0.0):
         super().__init__()
         if not np.isfinite(f0) or not 70 <= f0 <= 400:
             raise ValueError("f0 must be between 70 and 400 Hz")
         self.f0 = float(f0)
+        if not 0 <= mix_synthetic <= 1:
+            raise ValueError("mix_synthetic must be a probability")
+        self.mix_synthetic = float(mix_synthetic)
         self.features = AcousticFeatures()
         self.recordings = []
         if targets:
             files = sorted(Path(targets).glob("*.wav"))
             if not files:
                 raise ValueError("Target directory must contain steady-vowel WAV files")
+            # Optional per-file f0 (Hz) beside the recordings; otherwise every file uses `f0`.
+            manifest = Path(targets) / "f0.json"
+            pitches = json.loads(manifest.read_text()) if manifest.is_file() else {}
             for path in files:
+                pitch = float(pitches.get(path.name, self.f0))
+                if not 70 <= pitch <= 400:
+                    raise ValueError(f"{path}: f0 {pitch} outside 70–400 Hz")
                 audio, fs = sf.read(path, always_2d=True)
                 if fs != SAMPLE_RATE or audio.shape[1] != 1 or not 0.1 <= len(audio) / fs <= 5:
                     raise ValueError(f"{path}: use 48 kHz mono, trimmed 0.1–5 second steady vowels")
                 if not np.isfinite(audio).all() or np.sqrt(np.mean(audio**2)) < 1e-5:
                     raise ValueError(f"{path}: silent or non-finite recording")
-                self.recordings.append((self.features(audio[:, 0]), audio[:, 0].copy()))
+                self.recordings.append((self.features(audio[:, 0]), audio[:, 0].copy(), pitch))
         self.bridge = Bridge(binary)
         self.low = np.array(self.bridge.schema["low"])
         self.high = np.array(self.bridge.schema["high"])
         table = json.loads((ROOT / "crates/chimera/src/phonetics/vowelTargets.generated.json").read_text())["male"]
         # Non-rhotic vowels; the initial task doesn't control retroflexion.
         self.postures = np.array([[v["artic"][k] for k in self.bridge.schema["keys"]]
-                                 for v in table.values() if v["artic"].get("ttCurl", 0) == 0])
+                                 for v in table.values() if v["artic"].get("ttCurl", 0) < 0.5])
         self.action_space = spaces.Box(-1, 1, (8,), np.float32)
         frame_size = 8 + 8 + N_BANDS + 1  # measured position, commanded target, acoustic feedback
         self.observation_space = spaces.Box(-np.inf, np.inf,
@@ -145,8 +154,13 @@ class VowelEnv(gym.Env):
         super().reset(seed=seed)
         self.steps = 0
         self.history.clear()
-        if self.recordings:
-            features, audio = self.recordings[int(self.np_random.integers(len(self.recordings)))]
+        self.episode_f0 = self.f0
+        index = (options or {}).get("index")
+        synthetic = not self.recordings or (index is None and self.np_random.uniform() < self.mix_synthetic)
+        if not synthetic:
+            if index is None:
+                index = int(self.np_random.integers(len(self.recordings)))
+            features, audio, self.episode_f0 = self.recordings[index]
             self.goal = features.copy()
             self.target_audio = audio.copy()
         else:
@@ -159,7 +173,7 @@ class VowelEnv(gym.Env):
             self.target_audio = np.asarray(response["audio"], dtype=np.float32)
             self.goal = self.features(response["audio"])
         self.command = np.asarray(self.bridge.schema["neutral"], dtype=np.float32)
-        self._receive(self.bridge.call(op="reset", f0=self.f0, targets=self.command.tolist()))
+        self._receive(self.bridge.call(op="reset", f0=self.episode_f0, targets=self.command.tolist()))
         return self._observation(), {"distance": acoustic_distance(self.achieved, self.goal)}
 
     def step(self, action):

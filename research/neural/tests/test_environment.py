@@ -68,3 +68,29 @@ def test_real_recording_validation(tmp_path):
         assert len(env.recordings) == 1
     finally:
         env.close()
+
+
+def test_upsample3_preserves_a_band_limited_tone():
+    from chimera_neural.hillenbrand import upsample3
+    n = np.arange(1600)
+    up = upsample3(np.sin(2 * np.pi * 200 * n / 16000))
+    expected = np.sin(2 * np.pi * 200 * np.arange(4800) / 48000)
+    assert len(up) == 4800
+    assert np.max(abs(up - expected)) < 1e-9
+
+
+def test_per_recording_f0_manifest_and_indexed_reset(tmp_path):
+    import json
+    import soundfile as sf
+    t = np.arange(4800) / 48000
+    for name, hz in (("a.wav", 100), ("b.wav", 180)):
+        sf.write(tmp_path / name, 0.1 * np.sin(2 * np.pi * hz * t), 48000)
+    (tmp_path / "f0.json").write_text(json.dumps({"a.wav": 100, "b.wav": 180}))
+    env = VowelEnv(targets=tmp_path, f0=140)
+    try:
+        env.reset(seed=0, options={"index": 1})
+        assert env.episode_f0 == 180
+        env.reset(seed=0, options={"index": 0})
+        assert env.episode_f0 == 100
+    finally:
+        env.close()
